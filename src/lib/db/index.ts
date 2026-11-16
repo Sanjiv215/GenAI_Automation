@@ -9,14 +9,19 @@ import {
 } from "@/types";
 import crypto from "crypto";
 
-const supabaseUrl = process.env.SUPABASE_URL;
+const rawUrl = process.env.SUPABASE_URL;
+const supabaseUrl = rawUrl?.startsWith("postgres")
+  ? process.env.NEXT_PUBLIC_SUPABASE_URL
+  : (rawUrl || process.env.NEXT_PUBLIC_SUPABASE_URL);
+
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const isSupabaseConfigured = Boolean(
   supabaseUrl &&
     supabaseKey &&
     supabaseUrl.startsWith("http") &&
-    !supabaseUrl.includes("your-project-id")
+    !supabaseUrl.includes("your-project-id") &&
+    !supabaseKey.includes("your_supabase_service_role_key")
 );
 
 let supabaseInstance: SupabaseClient | null = null;

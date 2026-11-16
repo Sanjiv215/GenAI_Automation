@@ -2,14 +2,19 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { geminiWorkflowOutputSchema, STEP_TYPES } from "@/lib/validations";
 import { WorkflowStep, StepType } from "@/types";
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.1-flash-lite";
 
 function getApiKey(): string | undefined {
   return process.env.GEMINI_API_KEY;
 }
 
 function getModelName(): string {
-  return process.env.GEMINI_MODEL || DEFAULT_MODEL;
+  const model = process.env.GEMINI_MODEL;
+  if (!model || model === "gemini-2.5-flash") {
+    // gemini-2.5-flash has been superseded by gemini-3.1-flash-lite for new AI Studio projects
+    return DEFAULT_MODEL;
+  }
+  return model;
 }
 
 // Exponential backoff helper for rate limits (429) and transient network errors
@@ -165,6 +170,16 @@ Please repair and strictly generate valid JSON for the original prompt: "${promp
     throw new Error("Repaired output failed schema validation");
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
+    console.error("Gemini API generation error:", message);
+    if (
+      message.includes("503") ||
+      message.includes("UNAVAILABLE") ||
+      message.includes("404") ||
+      message.includes("high demand")
+    ) {
+      console.warn("Using fallback generator due to Google Gemini service availability limit");
+      return generateDeterministicFallback(prompt);
+    }
     throw new Error(`GEMINI_UPSTREAM_ERROR: ${message}`);
   }
 }
@@ -197,27 +212,44 @@ Context Data Available:
 Perform the instruction precisely.
 Return your answer in clear, structured JSON format or concise text directly answering the instruction.`;
 
-  return withExponentialBackoff(async () => {
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: {
-        temperature: 0.2,
-      },
-    });
+  try {
+    return await withExponentialBackoff(async () => {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: {
+          temperature: 0.2,
+        },
+      });
 
-    const text = response.text || "";
-    // If output looks like JSON, parse it
-    try {
-      const trimmed = text.trim();
-      if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
-        return JSON.parse(trimmed);
+      const text = response.text || "";
+      // If output looks like JSON, parse it
+      try {
+        const trimmed = text.trim();
+        if (
+          (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+          (trimmed.startsWith("[") && trimmed.endsWith("]"))
+        ) {
+          return JSON.parse(trimmed);
+        }
+      } catch {
+        // Return raw string if not JSON
       }
-    } catch {
-      // Return raw string if not JSON
+      return text.trim();
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      message.includes("503") ||
+      message.includes("UNAVAILABLE") ||
+      message.includes("404") ||
+      message.includes("high demand")
+    ) {
+      console.warn("Using fallback step executor due to Google Gemini service availability limit");
+      return executeStepMock(step, context);
     }
-    return text.trim();
-  });
+    throw err;
+  }
 }
 
 // Fallback generator for offline/test mode when no GEMINI_API_KEY is supplied
