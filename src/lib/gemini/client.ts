@@ -18,6 +18,15 @@ function getModelName(): string {
 }
 
 // Exponential backoff helper for rate limits (429) and transient network errors
+export function withTimeout<T>(promise: Promise<T>, timeoutMs = 25000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Gemini API call timed out after ${timeoutMs}ms`)), timeoutMs)
+    ),
+  ]);
+}
+
 export async function withExponentialBackoff<T>(
   fn: () => Promise<T>,
   maxRetries = 3,
@@ -38,7 +47,8 @@ export async function withExponentialBackoff<T>(
         errorMessage.includes("quota") ||
         errorMessage.includes("rate limit") ||
         errorMessage.includes("503") ||
-        errorMessage.includes("UNAVAILABLE");
+        errorMessage.includes("UNAVAILABLE") ||
+        errorMessage.includes("timed out");
 
       if (attempt >= maxRetries || !isRateLimitOrTransient) {
         throw err;
@@ -125,18 +135,21 @@ Always return structured JSON strictly conforming to the requested schema.`;
 
   const runGeneration = async (userContent: string) => {
     return withExponentialBackoff(async () => {
-      const response = await ai.models.generateContent({
-        model,
-        contents: [
-          { role: "user", parts: [{ text: userContent }] }
-        ],
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema: workflowResponseSchema,
-          temperature: 0.2,
-        },
-      });
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: [
+            { role: "user", parts: [{ text: userContent }] }
+          ],
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: workflowResponseSchema,
+            temperature: 0.2,
+          },
+        }),
+        30000
+      );
 
       const text = response.text;
       if (!text) {
@@ -175,7 +188,9 @@ Please repair and strictly generate valid JSON for the original prompt: "${promp
       message.includes("503") ||
       message.includes("UNAVAILABLE") ||
       message.includes("404") ||
-      message.includes("high demand")
+      message.includes("high demand") ||
+      message.includes("timed out") ||
+      message.includes("Maximum retry attempts")
     ) {
       console.warn("Using fallback generator due to Google Gemini service availability limit");
       return generateDeterministicFallback(prompt);
@@ -214,23 +229,29 @@ Return your answer in clear, structured JSON format or concise text directly ans
 
   try {
     return await withExponentialBackoff(async () => {
-      const response = await ai.models.generateContent({
-        model,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          temperature: 0.2,
-        },
-      });
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          config: {
+            temperature: 0.2,
+          },
+        }),
+        30000
+      );
 
       const text = response.text || "";
       // If output looks like JSON, parse it
       try {
-        const trimmed = text.trim();
+        let cleaned = text.trim();
+        if (cleaned.startsWith("```")) {
+          cleaned = cleaned.replace(/^```[a-z]*\n?/i, "").replace(/```\s*$/i, "").trim();
+        }
         if (
-          (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-          (trimmed.startsWith("[") && trimmed.endsWith("]"))
+          (cleaned.startsWith("{") && cleaned.endsWith("}")) ||
+          (cleaned.startsWith("[") && cleaned.endsWith("]"))
         ) {
-          return JSON.parse(trimmed);
+          return JSON.parse(cleaned);
         }
       } catch {
         // Return raw string if not JSON
@@ -243,7 +264,9 @@ Return your answer in clear, structured JSON format or concise text directly ans
       message.includes("503") ||
       message.includes("UNAVAILABLE") ||
       message.includes("404") ||
-      message.includes("high demand")
+      message.includes("high demand") ||
+      message.includes("timed out") ||
+      message.includes("Maximum retry attempts")
     ) {
       console.warn("Using fallback step executor due to Google Gemini service availability limit");
       return executeStepMock(step, context);

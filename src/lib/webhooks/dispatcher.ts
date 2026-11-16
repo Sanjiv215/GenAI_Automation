@@ -101,10 +101,12 @@ export async function dispatchWebhookEvent(
     const webhooks = await webhookRepo.findByEvent(event, apiKeyId);
     if (!webhooks || webhooks.length === 0) return;
 
-    // Trigger deliveries asynchronously
-    await Promise.allSettled(
+    // Trigger deliveries asynchronously in background without blocking execution
+    Promise.allSettled(
       webhooks.map((wh) => deliverWebhookWithRetries(wh, event, eventData))
-    );
+    ).catch((err) => {
+      console.error("Webhook dispatch error:", err);
+    });
   } catch {
     // Webhook dispatch should not crash the main thread
   }
