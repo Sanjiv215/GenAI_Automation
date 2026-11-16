@@ -28,11 +28,16 @@ export async function POST(req: NextRequest) {
   const token = createAdminSessionToken();
   const response = NextResponse.json({ success: true, message: "Logged in successfully" });
 
+  const isProductionNonLocal =
+    process.env.NODE_ENV === "production" &&
+    !process.env.APP_URL?.includes("localhost") &&
+    !req.headers.get("host")?.includes("localhost");
+
   response.cookies.set({
     name: ADMIN_COOKIE_NAME,
     value: token,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isProductionNonLocal,
     sameSite: "lax",
     path: "/",
     maxAge: 7 * 24 * 60 * 60, // 7 days

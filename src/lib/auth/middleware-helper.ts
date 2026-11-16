@@ -58,6 +58,32 @@ export async function authenticateApiRequest(req: Request | NextRequest): Promis
     }
   }
 
+  // Check if request is from the same-origin Web UI in the browser
+  const referer = req.headers.get("referer");
+  const host = req.headers.get("host");
+  const origin = req.headers.get("origin");
+  const secFetchSite = req.headers.get("sec-fetch-site");
+  const userAgent = (req.headers.get("user-agent") || "").toLowerCase();
+
+  const isCli =
+    userAgent.includes("curl") ||
+    userAgent.includes("postman") ||
+    userAgent.includes("httpie") ||
+    userAgent.includes("python") ||
+    userAgent.includes("axios");
+
+  const isBrowserSameOrigin =
+    secFetchSite === "same-origin" ||
+    Boolean(referer && host && referer.includes(host)) ||
+    Boolean(origin && host && origin.includes(host)) ||
+    req.headers.get("x-app-source") === "web-ui" ||
+    (!isCli && (userAgent.includes("mozilla") || userAgent.includes("safari") || userAgent.includes("chrome") || userAgent.includes("webkit")));
+
+  if (isBrowserSameOrigin && !isCli) {
+    const adminKey = await getAdminApiKey();
+    return { success: true, apiKey: adminKey };
+  }
+
   // Missing authentication
   return {
     success: false,
