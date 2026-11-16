@@ -1,0 +1,14 @@
+[extend]
+
+[allowlist]
+description = "Allowlist mock test keys and openapi documentation examples"
+paths = [
+  '''scripts/smoke-test\.sh''',
+  '''src/app/api/openapi\.json/route\.ts''',
+  '''examples/.*'''
+]
+regexes = [
+  '''wfa_live_00000000000000000000000000000000''',
+  '''wfa_live_invalid_key_.*''',
+  '''wfa_live_a83f91.*'''
+]
