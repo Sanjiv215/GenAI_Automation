@@ -25,6 +25,7 @@ yarn-error.log*
 # Local environment files (Never commit real credentials)
 .env*
 !.env.example
+.env.local
 
 # Vercel
 .vercel
